@@ -1,1 +1,56 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 @AGENTS.md
+
+## Commands
+
+```bash
+npm run dev              # dev server (Next.js, Turbopack)
+npm run build            # production build
+npm run lint              # eslint
+
+npm run test              # vitest, watch mode
+npm run test:run          # vitest, single run
+npx vitest run src/lib/avialability.test.ts   # single test file (note the existing typo in the filename)
+
+npm run db:generate       # drizzle-kit: generate a migration from schema.ts
+npm run db:migrate        # drizzle-kit: apply migrations
+npm run db:studio         # drizzle-kit: browse the DB
+npm run db:seed           # tsx src/db/seed.ts
+```
+
+DB access requires `DATABASE_URL` (Postgres) in `.env`; auth requires `AUTH_SECRET`, `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET`; email requires `RESEND_API_KEY`.
+
+## Architecture
+
+Multi-tenant appointment booking app (Next.js App Router). Every tenant (a salon/business) is identified by a slug in the URL: `src/app/[tenant]/...`. There is no middleware-based tenant resolution — each route/query resolves the tenant by looking up `tenants.slug` directly against the DB.
+
+**Layers, top to bottom:**
+
+- `src/app/[tenant]/**` — routes. Public booking flow (`book/`), tenant-scoped admin (`admin/`).
+- `src/lib/actions/*` — `"use server"` actions, the only entry point the UI calls into. They own input validation (zod) and re-check everything server-side (tenant/service ownership, slot availability) rather than trusting client-supplied state.
+- `src/lib/availability.query.ts` — DB-facing: loads working hours/exceptions/bookings for a tenant+service in one round trip, then delegates the actual math to `availability.ts`.
+- `src/lib/availability.ts` — pure functions, no DB access. This is deliberate: timezone/DST/buffer edge cases are covered by vitest without needing Postgres running. Tested in `avialability.test.ts` (filename typo is intentional/existing, don't "fix" it without also updating the vitest command).
+- `src/db/schema.ts` — single source of truth for the data model (drizzle-orm, Postgres).
+- `src/auth.ts` — NextAuth v5 (beta). Credentials provider checks `users.passwordHash`; Google provider does NOT auto-provision — a `users` row with matching email must already exist, or sign-in is refused.
+
+**Multi-tenant invariants to preserve when touching this code:**
+
+- Every query that touches tenant-owned data must filter by `tenantId` (or join through something that does) — see the comments in `booking.ts` and `availability.query.ts` about why `serviceId`/`staffId` alone aren't trusted.
+- A logged-in user can belong to only one tenant; the admin layout (`admin/(protected)/layout.tsx`) checks `session.user.tenantId` against the tenant in the URL and redirects if they don't match — don't bypass this check when adding admin routes.
+- The `admin/(protected)/` route group exists specifically to keep `admin/login` outside the auth check (avoids a redirect loop). New protected admin pages go inside `(protected)/`; anything that must stay reachable while logged out goes outside it.
+
+**Booking domain model (`schema.ts`):**
+
+- `bookings.endAt` includes the service's buffer time; `serviceEndAt` is the real end shown to the customer. The gap between them is cleanup/prep time.
+- `serviceName`/`durationMinutes`/`bufferMinutes`/`priceCents` on `bookings` are snapshots taken at booking time — changing a service's price/duration later must not retroactively change existing bookings.
+- `staffServices.durationOverride`/`priceOverrideCents` (nullable) override the service's defaults per staff member; `null` means "use the service's value."
+- `scheduleExceptions` with `staffId = null` applies to the whole tenant (holidays); per-staff exceptions win over the tenant one, which wins over recurring `workingHours`. Priority order is implemented in `availability.ts`'s `windowsForDay`.
+- Availability slot times are half-open intervals `[start, end)`; `zonedToUtc` converts a tenant-local wall-clock time to a UTC instant using its IANA timezone (DST-correct, no hardcoded offset tables).
+- Notification attempts (`notifications` table) are append-only — one row per send attempt, never overwritten — so delivery history/debugging doesn't depend on external provider logs.
+
+## Language
+
+Code comments and some domain/db content are in Romanian; identifiers and code are in English. Match the existing language when editing a file rather than translating wholesale.
