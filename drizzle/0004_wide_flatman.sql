@@ -1,0 +1,1 @@
+ALTER TABLE "customers" ADD CONSTRAINT "customers_tenant_phone_unique" UNIQUE("tenant_id","phone");

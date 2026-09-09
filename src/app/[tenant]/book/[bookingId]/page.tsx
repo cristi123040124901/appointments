@@ -76,7 +76,9 @@ export default async function ConfirmationPage({
               value={`${(row.priceCents / 100).toFixed(0)} lei`}
             />
             <Row label="Pe numele" value={row.customerName} />
-            <Row label="Telefon" value={row.customerPhone} />
+            {row.customerPhone && (
+              <Row label="Telefon" value={row.customerPhone} />
+            )}
           </dl>
 
           <p className="mt-6 text-sm text-neutral-500">

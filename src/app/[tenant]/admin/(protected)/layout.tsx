@@ -15,6 +15,7 @@
 //       page.tsx                <- dashboard-ul (fostul admin/page.tsx)
 //
 import { redirect, notFound } from "next/navigation";
+import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { auth } from "@/auth";
 import { db } from "@/db";
@@ -51,12 +52,37 @@ export default async function AdminLayout({
     redirect(`/${slug}/admin/login?error=wrong_tenant`);
   }
 
+  const navItems = [
+    { href: `/${slug}/admin`, label: "Dashboard" },
+    { href: `/${slug}/admin/bookings`, label: "Rezervări" },
+    { href: `/${slug}/admin/services`, label: "Servicii" },
+    { href: `/${slug}/admin/staff`, label: "Echipă" },
+    { href: `/${slug}/admin/schedule`, label: "Program" },
+  ];
+
   return (
     <div>
       <header
-        style={{ borderBottom: "1px solid #e2e8f0", padding: "12px 24px" }}
+        style={{
+          borderBottom: "1px solid #e2e8f0",
+          padding: "12px 24px",
+          display: "flex",
+          alignItems: "center",
+          gap: 24,
+        }}
       >
         <strong>{tenant.name}</strong> — admin
+        <nav style={{ display: "flex", gap: 16 }}>
+          {navItems.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              style={{ fontSize: 14, color: "#334155" }}
+            >
+              {item.label}
+            </Link>
+          ))}
+        </nav>
       </header>
       <main style={{ padding: 24 }}>{children}</main>
     </div>

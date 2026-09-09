@@ -13,6 +13,8 @@ import {
 } from "@/db/schema";
 import { getAvailability } from "@/lib/availability.query";
 import { sendBookingConfirmationEmail } from "@/lib/notifications/send-booking-confirmation";
+import { auth } from "@/auth";
+import { logger } from "@/lib/logger";
 
 /* ------------------------------------------------------------------ */
 /* Validare                                                            */
@@ -41,10 +43,14 @@ const createSchema = z.object({
   /** null = „oricine disponibil" */
   staffId: z.string().uuid().nullable(),
   startAt: z.string().datetime(),
-  name: z.string().trim().min(2, "Numele e prea scurt").max(80),
-  phone: phoneSchema,
-  email: z.string().email("Email invalid").optional().or(z.literal("")),
   notes: z.string().trim().max(500).optional(),
+  // câmpuri de guest — necesare doar dacă nu e client logat pe tenantul ăsta
+  name: z.string().trim().min(2, "Numele e prea scurt").max(80).optional(),
+  phone: phoneSchema.optional(),
+  email: z.string().email("Email invalid").optional().or(z.literal("")),
+  // folosit doar ca să completăm telefonul unui client logat care nu are unul
+  // (ex. cont creat prin Google)
+  phoneOverride: phoneSchema.optional(),
 });
 
 export type ActionResult<T> =
@@ -182,20 +188,58 @@ export async function createBookingAction(
     serviceEndAt.getTime() + service.bufferMinutes * 60_000,
   );
 
-  /* 6. Client: îl regăsim după telefon, altfel îl creăm. */
-  const [customer] = await db
-    .insert(customers)
-    .values({
-      tenantId: tenant.id,
-      phone: input.phone,
-      name: input.name,
-      email: input.email || null,
-    })
-    .onConflictDoUpdate({
-      target: [customers.tenantId, customers.phone],
-      set: { name: input.name },
-    })
-    .returning();
+  /* 6. Client: cel logat (dacă are cont pe tenantul ăsta) sau guest
+        regăsit/creat după telefon. Nu avem încredere în ce zice clientul
+        despre cine e — verificăm sesiunea direct pe server, nu un
+        customerId trimis din browser. */
+  const session = await auth();
+  const su = session?.user as
+    | { kind?: string; tenantId?: string; id?: string }
+    | undefined;
+
+  let customer: typeof customers.$inferSelect;
+
+  if (su?.kind === "customer" && su.tenantId === tenant.id) {
+    const [existing] = await db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.id, su.id!), eq(customers.tenantId, tenant.id)))
+      .limit(1);
+    if (!existing) return { ok: false, error: "Contul nu a fost găsit." };
+
+    if (existing.phone) {
+      customer = existing;
+    } else {
+      // cont creat prin Google: n-avem telefon, îl cerem o singură dată aici
+      if (!input.phoneOverride) {
+        return { ok: false, error: "Numărul de telefon e obligatoriu." };
+      }
+      const [updated] = await db
+        .update(customers)
+        .set({ phone: input.phoneOverride })
+        .where(eq(customers.id, existing.id))
+        .returning();
+      customer = updated;
+    }
+  } else {
+    if (!input.name || !input.phone) {
+      return { ok: false, error: "Numele și telefonul sunt obligatorii." };
+    }
+    const [created] = await db
+      .insert(customers)
+      .values({
+        tenantId: tenant.id,
+        phone: input.phone,
+        name: input.name,
+        email: input.email || null,
+      })
+      .onConflictDoUpdate({
+        target: [customers.tenantId, customers.phone],
+        set: { name: input.name },
+      })
+      .returning();
+    customer = created;
+  }
 
   /* 7. Inserare. Constrângerea EXCLUDE e ultima linie de apărare:
         dacă doi clienți apasă butonul în aceeași secundă, unul primește 23P01. */
@@ -232,7 +276,7 @@ export async function createBookingAction(
         error: "Cineva tocmai a rezervat ora asta. Alege alta.",
       };
     }
-    console.error("createBooking:", err);
+    logger.error("createBooking", err);
     return {
       ok: false,
       error: "Nu am putut salva rezervarea. Încearcă din nou.",

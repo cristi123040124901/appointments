@@ -29,6 +29,20 @@
       "when": 1788528249405,
       "tag": "0003_lame_doctor_doom",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788954351010,
+      "tag": "0004_wide_flatman",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788962975715,
+      "tag": "0005_burly_franklin_storm",
+      "breakpoints": true
     }
   ]
 }

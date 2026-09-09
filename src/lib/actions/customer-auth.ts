@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, tenants } from "@/db/schema";
 import { hashPassword } from "@/lib/auth/password";
+import { sendVerificationEmail } from "@/lib/actions/email-verification";
 
 type RegisterResult = { ok: true } | { ok: false; error: string };
 
@@ -43,13 +44,20 @@ export async function registerCustomer(input: {
 
   const passwordHash = await hashPassword(password);
 
-  await db.insert(customers).values({
-    tenantId: tenant.id,
-    name,
-    email,
-    phone,
-    passwordHash,
-  });
+  const [created] = await db
+    .insert(customers)
+    .values({
+      tenantId: tenant.id,
+      name,
+      email,
+      phone,
+      passwordHash,
+    })
+    .returning({ id: customers.id });
+
+  // fire-and-forget, ca la confirmarea de booking — nu blocăm înregistrarea
+  // dacă Resend e lent/pică
+  void sendVerificationEmail(created.id, tenantSlug, tenant.name, email);
 
   return { ok: true };
 }

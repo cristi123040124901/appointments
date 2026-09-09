@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: dev
+          POSTGRES_PASSWORD: devpass
+          POSTGRES_DB: booking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dev -d booking"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://dev:devpass@localhost:5432/booking
+      AUTH_SECRET: ci-placeholder-secret
+      AUTH_GOOGLE_ID: ci-placeholder
+      AUTH_GOOGLE_SECRET: ci-placeholder
+      RESEND_API_KEY: ci-placeholder
+      ADMIN_HASH_PASSWORD: ci-placeholder
+      CRON_SECRET: ci-placeholder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      # verifică faptul că migrările din drizzle/ chiar aplică curat pe o
+      # bază goală — prinde exact ce a fost o îngrijorare la EXCLUDE
+      # constraint-ul din 0001 (vezi comentariul din src/db/seed.ts). Trebuie
+      # să ruleze înaintea testelor — unele teste ating DB-ul direct.
+      - run: npm run db:migrate
+
+      - run: npm run test:run
+
+      - run: npm run build

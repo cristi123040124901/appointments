@@ -21,7 +21,7 @@ npm run db:studio         # drizzle-kit: browse the DB
 npm run db:seed           # tsx src/db/seed.ts
 ```
 
-DB access requires `DATABASE_URL` (Postgres) in `.env`; auth requires `AUTH_SECRET`, `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET`; email requires `RESEND_API_KEY`.
+DB access requires `DATABASE_URL` (Postgres) in `.env`; auth requires `AUTH_SECRET`, `AUTH_GOOGLE_ID`/`AUTH_GOOGLE_SECRET`; email requires `RESEND_API_KEY`. Booking reminders (`/api/cron/reminders`) require `CRON_SECRET` and an external scheduler hitting that route hourly — see `.env.example`.
 
 ## Architecture
 

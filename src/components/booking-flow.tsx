@@ -21,6 +21,12 @@ type StaffMember = {
   bio: string | null;
   serviceIds: string[];
 };
+type LoggedInCustomer = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+} | null;
 
 type Props = {
   tenantSlug: string;
@@ -28,6 +34,7 @@ type Props = {
   services: Service[];
   staff: StaffMember[];
   initialServiceId?: string | null;
+  loggedInCustomer: LoggedInCustomer;
 };
 
 const DAYS_AHEAD = 14;
@@ -75,6 +82,7 @@ export function BookingFlow({
   services,
   staff,
   initialServiceId,
+  loggedInCustomer,
 }: Props) {
   const router = useRouter();
   const dates = upcomingDates(timezone, DAYS_AHEAD);
@@ -92,6 +100,7 @@ export function BookingFlow({
     email: "",
     notes: "",
   });
+  const [phoneOverride, setPhoneOverride] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loadingSlots, startLoading] = useTransition();
   const [submitting, startSubmit] = useTransition();
@@ -128,10 +137,10 @@ export function BookingFlow({
         serviceId: service.id,
         staffId,
         startAt: slot.startAt,
-        name: form.name,
-        phone: form.phone,
-        email: form.email,
         notes: form.notes,
+        ...(loggedInCustomer
+          ? { phoneOverride: loggedInCustomer.phone ? undefined : phoneOverride }
+          : { name: form.name, phone: form.phone, email: form.email }),
       });
       if (res.ok) router.push(`/${tenantSlug}/book/${res.data.bookingId}`);
       else {
@@ -282,28 +291,63 @@ export function BookingFlow({
             Cum te contactăm?
           </h2>
           <div className="space-y-3">
-            <Field
-              label="Nume"
-              value={form.name}
-              onChange={(v) => setForm({ ...form, name: v as string })}
-              autoComplete="name"
-            />
-            <Field
-              label="Telefon"
-              value={form.phone}
-              onChange={(v) => setForm({ ...form, phone: v as string })}
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              hint="Aici primești confirmarea și reminderul."
-            />
-            <Field
-              label="Email (opțional)"
-              value={form.email}
-              onChange={(v) => setForm({ ...form, email: v as string })}
-              type="email"
-              autoComplete="email"
-            />
+            {loggedInCustomer ? (
+              <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                <p className="text-sm text-neutral-700">
+                  Rezervi ca{" "}
+                  <span className="font-medium text-neutral-900">
+                    {loggedInCustomer.name}
+                  </span>
+                  {loggedInCustomer.email && ` (${loggedInCustomer.email})`}
+                </p>
+                {!loggedInCustomer.phone && (
+                  <div className="mt-3">
+                    <Field
+                      label="Telefon"
+                      value={phoneOverride}
+                      onChange={(v) => setPhoneOverride(v as string)}
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      hint="Aici primești confirmarea și reminderul."
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                <Field
+                  label="Nume"
+                  value={form.name}
+                  onChange={(v) => setForm({ ...form, name: v as string })}
+                  autoComplete="name"
+                />
+                <Field
+                  label="Telefon"
+                  value={form.phone}
+                  onChange={(v) => setForm({ ...form, phone: v as string })}
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  hint="Aici primești confirmarea și reminderul."
+                />
+                <Field
+                  label="Email (opțional)"
+                  value={form.email}
+                  onChange={(v) => setForm({ ...form, email: v as string })}
+                  type="email"
+                  autoComplete="email"
+                />
+                <p className="text-sm text-neutral-500">
+                  <a
+                    href={`/${tenantSlug}/login`}
+                    className="underline underline-offset-4"
+                  >
+                    Ai deja cont? Intră ca să nu mai completezi datele
+                  </a>
+                </p>
+              </>
+            )}
             <Field
               label="Mențiuni (opțional)"
               value={form.notes}
@@ -333,7 +377,10 @@ export function BookingFlow({
             <button
               onClick={submit}
               disabled={
-                submitting || form.name.length < 2 || form.phone.length < 9
+                submitting ||
+                (loggedInCustomer
+                  ? !loggedInCustomer.phone && phoneOverride.length < 9
+                  : form.name.length < 2 || form.phone.length < 9)
               }
               className="rounded-xl bg-[var(--brand)] px-6 py-3 font-medium text-white transition disabled:opacity-40"
             >

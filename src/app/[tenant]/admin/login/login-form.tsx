@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { signIn } from "next-auth/react";
 
 export function LoginForm({ tenantSlug }: { tenantSlug: string }) {
@@ -94,6 +95,18 @@ export function LoginForm({ tenantSlug }: { tenantSlug: string }) {
           {loading ? "Se conectează..." : "Intră în cont"}
         </button>
       </form>
+
+      <Link
+        href={`/${tenantSlug}/admin/forgot-password`}
+        style={{
+          textAlign: "center",
+          color: "#64748b",
+          fontSize: 13,
+          textDecoration: "underline",
+        }}
+      >
+        Ai uitat parola?
+      </Link>
     </div>
   );
 }

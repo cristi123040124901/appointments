@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { resend, EMAIL_FROM } from "@/lib/resend";
 import { bookingConfirmationHtml } from "@/lib/email/booking-confirmation";
+import { logger } from "@/lib/logger";
 
 /**
  * Trimite emailul de confirmare pentru un booking deja salvat.
@@ -49,8 +50,9 @@ export async function sendBookingConfirmationEmail(
     .limit(1);
 
   if (!row) {
-    console.error(
-      `sendBookingConfirmationEmail: booking ${bookingId} nu există`,
+    logger.error(
+      "sendBookingConfirmationEmail",
+      new Error(`booking ${bookingId} nu există`),
     );
     return;
   }
@@ -105,7 +107,9 @@ export async function sendBookingConfirmationEmail(
         recipient: row.customerEmail,
         error: error.message,
       });
-      console.error("sendBookingConfirmationEmail:", error);
+      logger.error("sendBookingConfirmationEmail", new Error(error.message), {
+        bookingId,
+      });
       return;
     }
 
@@ -130,6 +134,6 @@ export async function sendBookingConfirmationEmail(
       recipient: row.customerEmail,
       error: err instanceof Error ? err.message : "unknown error",
     });
-    console.error("sendBookingConfirmationEmail (network):", err);
+    logger.error("sendBookingConfirmationEmail (network)", err, { bookingId });
   }
 }

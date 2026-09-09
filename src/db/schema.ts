@@ -55,6 +55,9 @@ export const users = pgTable(
     passwordHash: text("password_hash"),
     name: text("name").notNull(),
     role: userRole("role").notNull().default("staff"),
+    // brute-force pe login: numărăm eșecurile consecutive, blocăm temporar
+    failedLoginAttempts: integer("failed_login_attempts").notNull().default(0),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -101,14 +104,21 @@ export const customers = pgTable(
     phone: text("phone"),
     name: text("name").notNull(),
     email: text("email"),
+    // null = neverificat. Contează doar dacă passwordHash e setat (cont
+    // creat prin credentials) — vezi signIn() din auth.ts: un cont Google
+    // nu se atașează peste un rând cu email neverificat și parolă (ar
+    // putea fi un cont "sechestrat" de altcineva care a folosit emailul tău).
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     notes: text("notes"),
+    failedLoginAttempts: integer("failed_login_attempts").notNull().default(0),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (t) => [
     unique("customers_tenant_email_unique").on(t.tenantId, t.email),
-    // păstrează orice index existent (ex. pe phone) aici
+    unique("customers_tenant_phone_unique").on(t.tenantId, t.phone),
   ],
 );
 
@@ -334,3 +344,67 @@ export const notifications = pgTable(
 
 export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
+
+/* ------------------------------------------------------------------ */
+/* Autentificare: resetare parolă și verificare email                  */
+/* ------------------------------------------------------------------ */
+
+export const passwordResetKind = pgEnum("password_reset_kind", [
+  "admin",
+  "customer",
+]);
+
+/**
+ * Un rând per cerere de resetare. Stocăm doar hash-ul tokenului (SHA-256) —
+ * dacă cineva citește DB-ul, nu poate folosi rândul ca link de resetare.
+ * Exact un singur token folosit vreodată per rând (usedAt) — nu se reciclează.
+ */
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: passwordResetKind("kind").notNull(),
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    customerId: uuid("customer_id").references(() => customers.id, {
+      onDelete: "cascade",
+    }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("password_reset_tokens_hash_unique").on(t.tokenHash),
+    index("password_reset_tokens_user_idx").on(t.userId),
+    index("password_reset_tokens_customer_idx").on(t.customerId),
+  ],
+);
+
+/** Aceeași idee ca password_reset_tokens, dar pentru confirmarea emailului la înregistrare. */
+export const emailVerificationTokens = pgTable(
+  "email_verification_tokens",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("email_verification_tokens_hash_unique").on(t.tokenHash),
+    index("email_verification_tokens_customer_idx").on(t.customerId),
+  ],
+);
+
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+export type EmailVerificationToken =
+  typeof emailVerificationTokens.$inferSelect;

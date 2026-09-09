@@ -7,7 +7,9 @@ import {
   services,
   staff as staffTable,
   staffServices,
+  customers,
 } from "@/db/schema";
+import { auth } from "@/auth";
 import { BookingFlow } from "@/components/booking-flow";
 
 // disponibilitatea depinde de „acum", deci nu se cache-uiește
@@ -74,6 +76,36 @@ export default async function BookPage({
     ? preselected!
     : null;
 
+  // login e OPȚIONAL aici — dacă e cont pe tenantul ăsta, sărim peste
+  // formularul de nume+telefon; dacă nu, fluxul de guest rămâne identic
+  const session = await auth();
+  const su = session?.user as
+    | { kind?: string; tenantId?: string; id?: string }
+    | undefined;
+
+  let loggedInCustomer: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string | null;
+  } | null = null;
+
+  if (su?.kind === "customer" && su.tenantId === tenant.id) {
+    const [cust] = await db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.id, su.id!), eq(customers.tenantId, tenant.id)))
+      .limit(1);
+    if (cust) {
+      loggedInCustomer = {
+        id: cust.id,
+        name: cust.name,
+        email: cust.email ?? "",
+        phone: cust.phone,
+      };
+    }
+  }
+
   return (
     <main
       className="min-h-dvh bg-neutral-50"
@@ -120,6 +152,7 @@ export default async function BookPage({
             priceCents: s.priceCents,
           }))}
           staff={staff}
+          loggedInCustomer={loggedInCustomer}
         />
       )}
     </main>

@@ -10,6 +10,11 @@ import { verifyPassword } from "@/lib/auth/password";
 // numele cookie-ului prin care "ducem" tenant-ul peste dus-întors la Google
 const CUSTOMER_INTENT_COOKIE = "pending_customer_tenant";
 
+// brute-force pe login: după MAX_FAILED_ATTEMPTS eșecuri consecutive,
+// contul se blochează temporar
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCK_DURATION_MS = 15 * 60 * 1000;
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt" },
   providers: [
@@ -37,11 +42,33 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           .limit(1);
         if (!row) return null;
 
+        if (row.lockedUntil && row.lockedUntil > new Date()) return null;
+
         const valid = await verifyPassword(
           password,
           row.passwordHash as string,
         );
-        if (!valid) return null;
+        if (!valid) {
+          const attempts = row.failedLoginAttempts + 1;
+          await db
+            .update(users)
+            .set({
+              failedLoginAttempts: attempts,
+              lockedUntil:
+                attempts >= MAX_FAILED_ATTEMPTS
+                  ? new Date(Date.now() + LOCK_DURATION_MS)
+                  : null,
+            })
+            .where(eq(users.id, row.id));
+          return null;
+        }
+
+        if (row.failedLoginAttempts > 0 || row.lockedUntil) {
+          await db
+            .update(users)
+            .set({ failedLoginAttempts: 0, lockedUntil: null })
+            .where(eq(users.id, row.id));
+        }
 
         return {
           id: row.id,
@@ -84,8 +111,35 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           .limit(1);
         if (!cust || !cust.passwordHash) return null;
 
+        if (cust.lockedUntil && cust.lockedUntil > new Date()) return null;
+
         const valid = await verifyPassword(password, cust.passwordHash);
-        if (!valid) return null;
+        if (!valid) {
+          const attempts = cust.failedLoginAttempts + 1;
+          await db
+            .update(customers)
+            .set({
+              failedLoginAttempts: attempts,
+              lockedUntil:
+                attempts >= MAX_FAILED_ATTEMPTS
+                  ? new Date(Date.now() + LOCK_DURATION_MS)
+                  : null,
+            })
+            .where(eq(customers.id, cust.id));
+          return null;
+        }
+
+        // emailul trebuie confirmat înainte de prima autentificare cu parolă —
+        // altfel oricine îți poate "sechestra" contul înregistrându-se cu
+        // emailul tău înaintea ta (vezi și reclaim-ul din signIn() pt. Google)
+        if (cust.email && !cust.emailVerifiedAt) return null;
+
+        if (cust.failedLoginAttempts > 0 || cust.lockedUntil) {
+          await db
+            .update(customers)
+            .set({ failedLoginAttempts: 0, lockedUntil: null })
+            .where(eq(customers.id, cust.id));
+        }
 
         return {
           id: cust.id,
@@ -143,9 +197,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               tenantId: tenant.id,
               email: user.email!,
               name: user.name ?? "Client",
+              emailVerifiedAt: new Date(),
               // phone rămâne null — îl cerem separat, o singură dată,
               // pe pagina de cont, dacă lipsește
             })
+            .returning();
+        } else if (cust.passwordHash && !cust.emailVerifiedAt) {
+          // rândul a fost creat prin credentials și n-a fost confirmat
+          // niciodată — posibil "sechestrat" de altcineva care s-a
+          // înregistrat cu emailul tău înaintea ta. Google e un provider
+          // de încredere: dacă TU te loghezi cu Google pe acest email,
+          // tu ești adevăratul proprietar — invalidăm parola veche ca
+          // să nu mai poată intra cine a creat contul cu parolă.
+          [cust] = await db
+            .update(customers)
+            .set({ passwordHash: null, emailVerifiedAt: new Date() })
+            .where(eq(customers.id, cust.id))
             .returning();
         }
 
