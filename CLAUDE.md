@@ -34,13 +34,21 @@ Multi-tenant appointment booking app (Next.js App Router). Every tenant (a salon
 - `src/lib/availability.query.ts` — DB-facing: loads working hours/exceptions/bookings for a tenant+service in one round trip, then delegates the actual math to `availability.ts`.
 - `src/lib/availability.ts` — pure functions, no DB access. This is deliberate: timezone/DST/buffer edge cases are covered by vitest without needing Postgres running. Tested in `avialability.test.ts` (filename typo is intentional/existing, don't "fix" it without also updating the vitest command).
 - `src/db/schema.ts` — single source of truth for the data model (drizzle-orm, Postgres).
-- `src/auth.ts` — NextAuth v5 (beta). Credentials provider checks `users.passwordHash`; Google provider does NOT auto-provision — a `users` row with matching email must already exist, or sign-in is refused.
+- `src/auth.ts` — NextAuth v5 (beta). Credentials providers check `passwordHash` and gate on `emailVerifiedAt` (both `users` and `customers`). Google's `signIn()` callback has three branches, checked in order: `pending_customer_tenant` cookie → auto-provision a customer for that tenant; `pending_owner_signup` cookie → create a brand-new tenant + owner (self-serve signup, see below); otherwise → invite-only admin login, a `users` row with matching email must already exist.
+
+**Self-serve tenant signup (`/signup`, outside `[tenant]`):**
+
+- `src/lib/actions/tenant-signup.ts` creates the `tenants` + owner `users` rows in one transaction. `src/lib/tenant-slug.ts` validates format and blocks reserved slugs (`api`, `signup`, etc. — anything that could collide with a top-level static route and make a tenant unreachable).
+- Email+password owners are unverified until they click the confirmation link (`emailVerificationTokens`, `kind: "admin"`); Google owners are auto-verified (Google already proved the email). Same reasoning as customer verification — see the comment on `customers.emailVerifiedAt`.
+- The Google path carries the chosen business name/slug/timezone across the OAuth redirect via the `pending_owner_signup` cookie (client-set, non-httpOnly, short-lived) — the slug is re-validated server-side in the `signIn()` callback since the cookie is client-controlled.
+- New tenants go live immediately (no approval step) with an empty admin panel — the existing empty states on the services/staff/schedule pages double as onboarding.
 
 **Multi-tenant invariants to preserve when touching this code:**
 
 - Every query that touches tenant-owned data must filter by `tenantId` (or join through something that does) — see the comments in `booking.ts` and `availability.query.ts` about why `serviceId`/`staffId` alone aren't trusted.
 - A logged-in user can belong to only one tenant; the admin layout (`admin/(protected)/layout.tsx`) checks `session.user.tenantId` against the tenant in the URL and redirects if they don't match — don't bypass this check when adding admin routes.
 - The `admin/(protected)/` route group exists specifically to keep `admin/login` outside the auth check (avoids a redirect loop). New protected admin pages go inside `(protected)/`; anything that must stay reachable while logged out goes outside it.
+- A Postgres error code thrown inside `db.transaction()` ends up on `err.cause.code`, not `err.code` — always check both via `pgErrorCode()` from `src/lib/db-error.ts`, never a raw `(err as {code?:string}).code` check (this broke silently once already, see `tenant-signup.test.ts`).
 
 **Booking domain model (`schema.ts`):**
 

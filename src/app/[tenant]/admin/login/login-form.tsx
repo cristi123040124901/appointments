@@ -4,12 +4,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { signIn } from "next-auth/react";
+import { resendVerificationAction } from "@/lib/actions/email-verification";
 
 export function LoginForm({ tenantSlug }: { tenantSlug: string }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [resent, setResent] = useState(false);
 
   const callbackUrl = `/${tenantSlug}/admin`;
 
@@ -30,11 +32,17 @@ export function LoginForm({ tenantSlug }: { tenantSlug: string }) {
     setLoading(false);
 
     if (res?.error) {
-      setError("Email sau parolă greșită.");
+      setError("Email sau parolă greșită, sau cont neconfirmat încă.");
       return;
     }
 
     window.location.href = callbackUrl;
+  }
+
+  async function handleResend() {
+    setResent(false);
+    await resendVerificationAction({ kind: "admin", tenantSlug, email });
+    setResent(true);
   }
 
   return (
@@ -78,7 +86,30 @@ export function LoginForm({ tenantSlug }: { tenantSlug: string }) {
           style={{ padding: 10, border: "1px solid #e2e8f0", borderRadius: 8 }}
         />
         {error && (
-          <p style={{ color: "#dc2626", fontSize: 13, margin: 0 }}>{error}</p>
+          <div style={{ display: "grid", gap: 4 }}>
+            <p style={{ color: "#dc2626", fontSize: 13, margin: 0 }}>{error}</p>
+            <button
+              type="button"
+              onClick={handleResend}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#64748b",
+                fontSize: 12,
+                cursor: "pointer",
+                textDecoration: "underline",
+                padding: 0,
+                textAlign: "left",
+              }}
+            >
+              Retrimite emailul de confirmare
+            </button>
+            {resent && (
+              <p style={{ fontSize: 12, color: "#334155", margin: 0 }}>
+                Dacă emailul e valid și încă neconfirmat, ți-am retrimis linkul.
+              </p>
+            )}
+          </div>
         )}
         <button
           type="submit"
@@ -106,6 +137,17 @@ export function LoginForm({ tenantSlug }: { tenantSlug: string }) {
         }}
       >
         Ai uitat parola?
+      </Link>
+      <Link
+        href="/signup"
+        style={{
+          textAlign: "center",
+          color: "#64748b",
+          fontSize: 13,
+          textDecoration: "underline",
+        }}
+      >
+        Nu ai o afacere înregistrată? Creează una
       </Link>
     </div>
   );

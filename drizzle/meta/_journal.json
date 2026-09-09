@@ -43,6 +43,13 @@
       "when": 1788962975715,
       "tag": "0005_burly_franklin_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788964960159,
+      "tag": "0006_mean_ares",
+      "breakpoints": true
     }
   ]
 }

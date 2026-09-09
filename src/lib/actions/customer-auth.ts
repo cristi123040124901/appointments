@@ -57,7 +57,13 @@ export async function registerCustomer(input: {
 
   // fire-and-forget, ca la confirmarea de booking — nu blocăm înregistrarea
   // dacă Resend e lent/pică
-  void sendVerificationEmail(created.id, tenantSlug, tenant.name, email);
+  void sendVerificationEmail({
+    kind: "customer",
+    id: created.id,
+    tenantSlug,
+    tenantName: tenant.name,
+    email,
+  });
 
   return { ok: true };
 }

@@ -15,6 +15,7 @@ import { getAvailability } from "@/lib/availability.query";
 import { sendBookingConfirmationEmail } from "@/lib/notifications/send-booking-confirmation";
 import { auth } from "@/auth";
 import { logger } from "@/lib/logger";
+import { pgErrorCode } from "@/lib/db-error";
 
 /* ------------------------------------------------------------------ */
 /* Validare                                                            */
@@ -270,7 +271,7 @@ export async function createBookingAction(
 
     return { ok: true, data: { bookingId: booking.id } };
   } catch (err) {
-    if ((err as { code?: string }).code === "23P01") {
+    if (pgErrorCode(err) === "23P01") {
       return {
         ok: false,
         error: "Cineva tocmai a rezervat ora asta. Alege alta.",

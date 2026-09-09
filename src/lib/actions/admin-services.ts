@@ -6,6 +6,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { services } from "@/db/schema";
 import { requireAdmin } from "@/lib/actions/admin-guard";
+import { pgErrorCode } from "@/lib/db-error";
 
 export type ActionResult<T = void> =
   | { ok: true; data: T }
@@ -134,7 +135,7 @@ export async function deleteServiceAction(
     return { ok: true, data: undefined };
   } catch (err) {
     // FK restrict — serviciul are rezervări istorice, nu poate fi șters
-    if ((err as { code?: string }).code === "23503") {
+    if (pgErrorCode(err) === "23503") {
       return {
         ok: false,
         error:

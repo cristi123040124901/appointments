@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { staff, staffServices, services } from "@/db/schema";
 import { requireAdmin } from "@/lib/actions/admin-guard";
 import type { ActionResult } from "@/lib/actions/admin-services";
+import { pgErrorCode } from "@/lib/db-error";
 
 const staffFields = z.object({
   name: z.string().trim().min(2, "Numele e prea scurt").max(120),
@@ -111,7 +112,7 @@ export async function deleteStaffAction(
     if (result.length === 0) return { ok: false, error: "Membru inexistent." };
     return { ok: true, data: undefined };
   } catch (err) {
-    if ((err as { code?: string }).code === "23503") {
+    if (pgErrorCode(err) === "23503") {
       return {
         ok: false,
         error:

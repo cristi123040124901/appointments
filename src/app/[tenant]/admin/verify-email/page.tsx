@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { tenants } from "@/db/schema";
 import { verifyEmailAction } from "@/lib/actions/email-verification";
 
-export default async function VerifyEmailPage({
+export default async function AdminVerifyEmailPage({
   params,
   searchParams,
 }: {
@@ -23,7 +23,7 @@ export default async function VerifyEmailPage({
   if (!tenant) notFound();
 
   const result = token
-    ? await verifyEmailAction({ kind: "customer", token })
+    ? await verifyEmailAction({ kind: "admin", token })
     : { ok: false as const, error: "Link invalid." };
 
   return (
@@ -36,7 +36,7 @@ export default async function VerifyEmailPage({
           <p style={{ fontSize: 14, color: "#334155" }}>
             Emailul a fost confirmat. Te poți autentifica acum.
           </p>
-          <Link href={`/${slug}/login`} style={{ color: "#0f172a", fontWeight: 600 }}>
+          <Link href={`/${slug}/admin/login`} style={{ color: "#0f172a", fontWeight: 600 }}>
             Intră în cont
           </Link>
         </div>

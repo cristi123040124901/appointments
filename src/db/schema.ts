@@ -55,6 +55,11 @@ export const users = pgTable(
     passwordHash: text("password_hash"),
     name: text("name").notNull(),
     role: userRole("role").notNull().default("staff"),
+    // null = neverificat. Owner-ii creați prin signup cu parolă trebuie să-și
+    // confirme emailul înainte de primul login — vezi și emailVerifiedAt pe
+    // customers, aceeași motivație (nu vrei ca altcineva să "sechestreze"
+    // un tenant nou folosind emailul tău).
+    emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     // brute-force pe login: numărăm eșecurile consecutive, blocăm temporar
     failedLoginAttempts: integer("failed_login_attempts").notNull().default(0),
     lockedUntil: timestamp("locked_until", { withTimezone: true }),
@@ -384,14 +389,22 @@ export const passwordResetTokens = pgTable(
   ],
 );
 
-/** Aceeași idee ca password_reset_tokens, dar pentru confirmarea emailului la înregistrare. */
+/**
+ * Aceeași idee ca password_reset_tokens, dar pentru confirmarea emailului
+ * la înregistrare — și aceeași formă (kind + FK nullabile pe ambele) ca să
+ * acopere și owner-ii de tenant (users), nu doar clienții.
+ */
 export const emailVerificationTokens = pgTable(
   "email_verification_tokens",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    customerId: uuid("customer_id")
-      .notNull()
-      .references(() => customers.id, { onDelete: "cascade" }),
+    kind: passwordResetKind("kind").notNull(),
+    userId: uuid("user_id").references(() => users.id, {
+      onDelete: "cascade",
+    }),
+    customerId: uuid("customer_id").references(() => customers.id, {
+      onDelete: "cascade",
+    }),
     tokenHash: text("token_hash").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     usedAt: timestamp("used_at", { withTimezone: true }),
@@ -401,6 +414,7 @@ export const emailVerificationTokens = pgTable(
   },
   (t) => [
     unique("email_verification_tokens_hash_unique").on(t.tokenHash),
+    index("email_verification_tokens_user_idx").on(t.userId),
     index("email_verification_tokens_customer_idx").on(t.customerId),
   ],
 );

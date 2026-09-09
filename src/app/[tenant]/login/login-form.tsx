@@ -85,7 +85,7 @@ export function CustomerLoginForm({ tenantSlug }: { tenantSlug: string }) {
 
   async function handleResend() {
     setResent(false);
-    await resendVerificationAction({ tenantSlug, email });
+    await resendVerificationAction({ kind: "customer", tenantSlug, email });
     setResent(true);
   }
 

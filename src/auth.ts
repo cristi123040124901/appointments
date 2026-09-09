@@ -6,9 +6,15 @@ import { cookies } from "next/headers";
 import { db } from "@/db";
 import { users, customers, tenants } from "@/db/schema";
 import { verifyPassword } from "@/lib/auth/password";
+import { isValidSlugFormat, isReservedSlug } from "@/lib/tenant-slug";
 
 // numele cookie-ului prin care "ducem" tenant-ul peste dus-întors la Google
 const CUSTOMER_INTENT_COOKIE = "pending_customer_tenant";
+// cookie prin care "ducem" datele afacerii noi peste dus-întors la Google,
+// la signup — vezi callback-ul signIn() mai jos
+const OWNER_SIGNUP_INTENT_COOKIE = "pending_owner_signup";
+
+type OwnerSignupIntent = { businessName: string; slug: string; timezone: string };
 
 // brute-force pe login: după MAX_FAILED_ATTEMPTS eșecuri consecutive,
 // contul se blochează temporar
@@ -62,6 +68,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             .where(eq(users.id, row.id));
           return null;
         }
+
+        // aceeași motivație ca la customer-credentials — vezi comentariul
+        // de acolo
+        if (row.email && !row.emailVerifiedAt) return null;
 
         if (row.failedLoginAttempts > 0 || row.lockedUntil) {
           await db
@@ -153,18 +163,38 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   callbacks: {
     /**
-     * Credentials (ambele) au verificat deja totul în authorize().
-     * Aici tratăm doar Google, care are DOUĂ fluxuri posibile:
+     * Credentials (toate) au verificat deja totul în authorize().
+     * Aici tratăm doar Google, care are TREI fluxuri posibile, în ordinea
+     * verificată mai jos:
      *
-     *  - admin: emailul trebuie să existe deja în `users` (invite-only,
-     *    ca înainte)
-     *  - client: cont NOU se creează automat la primul login — de
-     *    asta e nevoie de cookie-ul CUSTOMER_INTENT_COOKIE, ca să
-     *    știm cărui tenant îi aparține clientul (Google nu ne mai dă
-     *    înapoi URL-ul de unde a pornit).
+     *  1. client: cont NOU se creează automat la primul login — de asta e
+     *     nevoie de cookie-ul CUSTOMER_INTENT_COOKIE, ca să știm cărui
+     *     tenant îi aparține clientul (Google nu ne mai dă înapoi URL-ul
+     *     de unde a pornit).
+     *  2. owner nou (signup): cookie-ul OWNER_SIGNUP_INTENT_COOKIE poartă
+     *     numele afacerii/slug-ul/fusul orar alese în formular — creăm un
+     *     tenant + un user "owner" noi. Dacă emailul are deja un cont
+     *     admin, nu mai creăm nimic, doar logăm la contul existent.
+     *  3. admin invite-only (login obișnuit): emailul trebuie să existe
+     *     deja în `users`, ca înainte.
      */
     async signIn({ user, account }) {
       if (account?.provider !== "google") return true;
+
+      // "user" din callback e tipat generic de next-auth — restrângem
+      // manual câmpurile pe care le adăugăm noi (vezi jwt()/session() mai
+      // jos, unde ajung în sesiune)
+      const setSessionFields = (fields: {
+        id: string;
+        tenantId: string;
+        role?: string;
+        kind: "admin" | "customer";
+      }) => {
+        Object.assign(
+          user as { id?: string; tenantId?: string; role?: string; kind?: string },
+          fields,
+        );
+      };
 
       const cookieStore = await cookies();
       const customerTenantSlug = cookieStore.get(CUSTOMER_INTENT_COOKIE)?.value;
@@ -216,13 +246,88 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             .returning();
         }
 
-        (user as { id?: string; tenantId?: string; kind?: string }).id =
-          cust.id;
-        (user as { id?: string; tenantId?: string; kind?: string }).tenantId =
-          tenant.id;
-        (user as { id?: string; tenantId?: string; kind?: string }).kind =
-          "customer";
+        setSessionFields({ id: cust.id, tenantId: tenant.id, kind: "customer" });
         return true;
+      }
+
+      const ownerSignupRaw = cookieStore.get(OWNER_SIGNUP_INTENT_COOKIE)?.value;
+      if (ownerSignupRaw) {
+        cookieStore.delete(OWNER_SIGNUP_INTENT_COOKIE);
+
+        // dacă emailul are deja un cont admin (ex. a încercat signup de
+        // două ori, sau are deja o afacere), nu creăm un tenant nou —
+        // îl logăm pur și simplu în contul lui existent
+        const [existing] = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, user.email!))
+          .limit(1);
+
+        if (existing) {
+          setSessionFields({
+            id: existing.id,
+            tenantId: existing.tenantId,
+            role: existing.role,
+            kind: "admin",
+          });
+          return true;
+        }
+
+        let intent: OwnerSignupIntent;
+        try {
+          intent = JSON.parse(ownerSignupRaw);
+        } catch {
+          return false;
+        }
+        // reverificăm slug-ul aici — cookie-ul e client-controlled, nu de
+        // încredere (verificarea din formularul de signup e doar UX)
+        if (
+          !intent.businessName?.trim() ||
+          !isValidSlugFormat(intent.slug) ||
+          isReservedSlug(intent.slug) ||
+          !intent.timezone
+        ) {
+          return false;
+        }
+
+        try {
+          const created = await db.transaction(async (tx) => {
+            const [tenant] = await tx
+              .insert(tenants)
+              .values({
+                name: intent.businessName,
+                slug: intent.slug,
+                timezone: intent.timezone,
+              })
+              .returning();
+            const [owner] = await tx
+              .insert(users)
+              .values({
+                tenantId: tenant.id,
+                email: user.email!,
+                name: user.name ?? intent.businessName,
+                role: "owner",
+                // Google e un provider de încredere — la fel ca la
+                // provizionarea clienților prin Google, nu mai cerem
+                // confirmare separată de email
+                emailVerifiedAt: new Date(),
+              })
+              .returning();
+            return { tenant, owner };
+          });
+
+          setSessionFields({
+            id: created.owner.id,
+            tenantId: created.tenant.id,
+            role: created.owner.role,
+            kind: "admin",
+          });
+          return true;
+        } catch {
+          // slug sau email luate chiar acum (race) — refuzăm, utilizatorul
+          // reia signup-ul
+          return false;
+        }
       }
 
       // fără cookie de intenție => presupunem flux admin (invite-only)
@@ -233,18 +338,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         .limit(1);
       if (!row) return false;
 
-      (
-        user as { id?: string; tenantId?: string; role?: string; kind?: string }
-      ).id = row.id;
-      (
-        user as { id?: string; tenantId?: string; role?: string; kind?: string }
-      ).tenantId = row.tenantId;
-      (
-        user as { id?: string; tenantId?: string; role?: string; kind?: string }
-      ).role = row.role;
-      (
-        user as { id?: string; tenantId?: string; role?: string; kind?: string }
-      ).kind = "admin";
+      setSessionFields({
+        id: row.id,
+        tenantId: row.tenantId,
+        role: row.role,
+        kind: "admin",
+      });
       return true;
     },
 
@@ -282,4 +381,4 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
 });
 
-export { CUSTOMER_INTENT_COOKIE };
+export { CUSTOMER_INTENT_COOKIE, OWNER_SIGNUP_INTENT_COOKIE };
